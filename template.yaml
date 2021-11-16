@@ -1,0 +1,187 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  eventbridge-integration-plaid-karte-s3
+
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: Amazon-eventbridge-integration-plaid-karte-s3
+    Description: This application demonstrates an integration with AWS S3 and Kinesis for Amazon EventBridge SaaS Partner PLAID
+    Author: AWS Quick Start
+    LicenseUrl: LICENSE.txt
+    ReadmeUrl: README.md
+    Labels:
+      - amazon
+      - eventbridge
+      - integration
+      - solution
+      - aws
+      - kinesis
+      - s3
+      - plaid
+    HomePageUrl: https://aws.amazon.com/quickstart/eventbridge/karte-s3-integration/
+    SemanticVersion: 0.1.0
+    SourceCodeUrl: https://github.com/aws-quickstart/eventbridge-integration-plaid-karte-s3-integration
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Amazon EventBridge Integration Solution
+        Parameters:
+          - EventSourceName
+          - S3DataBucketName
+          - KinesisStreamName
+    ParameterLabels:
+      EventSourceName:
+        default: Event Source Name
+      S3DataBucketName:
+        default: S3 Bucket Name
+      KinesisStreamName:
+        default: Kinesis Stream Name
+
+Parameters:
+  EventSourceName:
+    Type: String
+    AllowedPattern: ^aws\.partner\/karte\.io(\/[\.\-_a-z0-9]+){3}$
+    MinLength: 1
+    MaxLength: 256
+    Description: Name of the Amazon EventBridge KARTE Event Source to associate with an Event Bus. For example, aws.partner/karte.io/{AWSAccountID}/{KARTEProjectId}/{AppName}
+  S3DataBucketName:
+    Type: String
+    Description: Name of S3 Bucket
+  KinesisStreamName:
+    Type: String
+    Description: Name of Kinesis Stream
+
+Resources:
+
+  #################
+  #  IAM          #
+  #################
+  KinesisIAMRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: "/"
+      RoleName: "write-to-s3-kinesis"
+      AssumeRolePolicyDocument: "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"firehose.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}"
+      MaxSessionDuration: 3600
+      ManagedPolicyArns: 
+        - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+        - "arn:aws:iam::aws:policy/AmazonKinesisFullAccess"
+        - "arn:aws:iam::aws:policy/AmazonKinesisFirehoseFullAccess"
+
+  EventBridgeInvokeKinesisIAMRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      Path: "/"
+      RoleName: "write-to-s3-eventbridge-invoke-kinesis"
+      AssumeRolePolicyDocument: "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"events.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}"
+      MaxSessionDuration: 3600
+      ManagedPolicyArns: 
+        - "arn:aws:iam::aws:policy/AmazonKinesisFullAccess"
+
+  #################
+  #  EventBridge  #
+  #################
+  EventBridgeEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Ref EventSourceName
+      EventSourceName: !Ref EventSourceName
+
+  EventBridgeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: catch-all rule for event bus
+      EventBusName: !Ref EventBridgeEventBus
+      EventPattern:
+        account:
+          - !Ref AWS::AccountId
+        detail-type:
+          - 'KARTE Action'
+        detail:
+          name:
+            - _write_to_s3_request
+      Name: write_to_s3
+      State: ENABLED
+      Targets:
+        - 
+          Arn: !GetAtt KinesisStream.Arn
+          Id: !Ref KinesisStream
+          RoleArn: !GetAtt EventBridgeInvokeKinesisIAMRole.Arn
+
+  #################
+  #  S3           #
+  #################
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties: 
+      AccessControl: Private
+      BucketName: !Ref S3DataBucketName
+
+  #################
+  #  Kinesis      #
+  #################
+  KinesisStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Ref KinesisStreamName
+      RetentionPeriodHours: 24
+      ShardCount: 1
+
+  #################
+  #  Firehose     #
+  #################
+  KinesisFirehoseDeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties: 
+      DeliveryStreamName: !Sub ${KinesisStreamName}-devlivery
+      DeliveryStreamType: KinesisStreamAsSource
+      ExtendedS3DestinationConfiguration: 
+        BucketARN: !GetAtt S3Bucket.Arn
+        BufferingHints: 
+          SizeInMBs: 128
+          IntervalInSeconds: 300
+        CloudWatchLoggingOptions: 
+          Enabled: false
+        CompressionFormat: "UNCOMPRESSED"
+        DataFormatConversionConfiguration: 
+          Enabled: false
+        DynamicPartitioningConfiguration: 
+          RetryOptions: 
+            DurationInSeconds: 300
+          Enabled: true
+        EncryptionConfiguration: 
+          NoEncryptionConfig: "NoEncryption"
+        Prefix: "firehorse/!{partitionKeyFromQuery:userId}/"
+        ErrorOutputPrefix: "firehorseFailure/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/hour=!{timestamp:HH}/!{firehose:error-output-type}"
+        RoleARN: !GetAtt KinesisIAMRole.Arn
+        ProcessingConfiguration: 
+          Enabled: true
+          Processors: 
+            - Type: "MetadataExtraction"
+              Parameters: 
+              - ParameterName: "MetadataExtractionQuery"
+                ParameterValue: "{userId:.detail.content.values.user_id}"
+              - ParameterName: "JsonParsingEngine"
+                ParameterValue: "JQ-1.6"
+        S3BackupMode: "Disabled"
+      KinesisStreamSourceConfiguration:
+        KinesisStreamARN: !GetAtt KinesisStream.Arn
+        RoleARN: !GetAtt KinesisIAMRole.Arn
+
+Outputs:
+  EventBridgeEventBus:
+    Description: SaaS Event Bus ARN
+    Value: !GetAtt EventBridgeEventBus.Arn
+  EventBridgeRule:
+    Description: EventBridge Rule ARN
+    Value: !GetAtt EventBridgeRule.Arn
+  S3Bucket: 
+    Description: S3Bucket ARN
+    Value: !GetAtt S3Bucket.Arn
+  KinesisStream:
+    Description: Kinesis ARN
+    Value: !GetAtt KinesisStream.Arn
+  KinesisFirehoseDeliveryStream:
+    Description: Kinesis Firehose ARN
+    Value: !GetAtt KinesisFirehoseDeliveryStream.Arn
