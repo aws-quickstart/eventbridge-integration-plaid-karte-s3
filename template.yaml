@@ -2,6 +2,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >
   eventbridge-integration-plaid-karte-s3
+  
+  (qs-1sfl5n301)
 
 Metadata:
   AWS::ServerlessRepo::Application:
