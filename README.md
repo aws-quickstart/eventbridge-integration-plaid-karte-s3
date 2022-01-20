@@ -9,4 +9,6 @@ You can use the data stored in Amazon S3 to improve your system's flexibility an
 
 ![Quick Start architecture for EventBridge Integration Solution for S3](images/eventbridge-plaid-karte-s3-architecture-diagram.png)
 
+To deploy this Amazon EventBridge integration, see (https://aws.amazon.com/quickstart/eventbridge/plaid-karte-s3/)[PLAID KARTE S3].
+
 To post feedback, submit feature ideas, or report bugs, use the **Issues** section of [this GitHub repo](https://github.com/aws-quickstart/eventbridge-integration-plaid-karte-s3-integration).
